@@ -102,12 +102,7 @@ public class PrivilegesConfiguration {
                 indicesNeedingSpecialRoles(settings)
             );
 
-            apiTokenRepository.subscribeOnChange(() -> {
-                SecurityDynamicConfiguration<ActionGroupsV7> actionGroupsConfiguration = configurationRepository.getConfiguration(
-                    CType.ACTIONGROUPS
-                );
-                rebuildTokenPrivileges(new FlattenedActionGroups(actionGroupsConfiguration.withStaticConfig()));
-            });
+            apiTokenRepository.subscribeOnChange(this::rebuildTokenPrivileges);
         }
 
         if (configurationRepository != null) {
@@ -213,7 +208,7 @@ public class PrivilegesConfiguration {
                     }
 
                     try {
-                        rebuildTokenPrivileges(flattenedActionGroups);
+                        rebuildTokenPrivileges();
                     } catch (Exception e) {
                         log.error("Error while updating API token privileges", e);
                     }
@@ -238,11 +233,15 @@ public class PrivilegesConfiguration {
         }
     }
 
-    /** Synchronized so that a slower, older computation cannot overwrite a newer one. */
-    private synchronized void rebuildTokenPrivileges(FlattenedActionGroups flattenedActionGroups) {
+    private synchronized void rebuildTokenPrivileges() {
         if (apiTokenRepository == null) {
             return;
         }
+        RawConfiguration configuration = rawConfiguration.get();
+        SecurityDynamicConfiguration<ActionGroupsV7> actionGroups = configuration != null
+            ? configuration.actionGroupsConfiguration
+            : SecurityDynamicConfiguration.empty(CType.ACTIONGROUPS);
+        FlattenedActionGroups flattenedActionGroups = new FlattenedActionGroups(actionGroups.withStaticConfig());
         Map<String, ActionPrivileges> newTokenPrivileges = new HashMap<>();
         apiTokenRepository.forEachToken(
             (tokenId, role) -> newTokenPrivileges.put(
