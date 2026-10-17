@@ -10,6 +10,7 @@
  */
 package org.opensearch.security.privileges;
 
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -69,6 +70,7 @@ public class PrivilegesConfiguration {
     private final AtomicReference<DlsFlsProcessedConfig> dlsFlsProcessedConfig = new AtomicReference<>();
 
     private ApiTokenRepository apiTokenRepository;
+    private RuntimeOptimizedActionPrivileges.SpecialIndexProtection tokenIndexProtection;
     private final Map<String, ActionPrivileges> tokenIdToActionPrivileges = new ConcurrentHashMap<>();
     /**
      * The pure static action groups should be ONLY used by action privileges for plugins; only those cannot and should
@@ -94,28 +96,17 @@ public class PrivilegesConfiguration {
 
         if (apiTokenRepository != null) {
             Settings settings = coreDependencies.settings();
-            RuntimeOptimizedActionPrivileges.SpecialIndexProtection tokenIndexProtection =
-                new RuntimeOptimizedActionPrivileges.SpecialIndexProtection(
-                    specialIndices::isSystemIndex,
-                    specialIndices::isSystemIndex,
-                    indicesNeedingSpecialRoles(settings)
-                );
+            this.tokenIndexProtection = new RuntimeOptimizedActionPrivileges.SpecialIndexProtection(
+                specialIndices::isSystemIndex,
+                specialIndices::isSystemIndex,
+                indicesNeedingSpecialRoles(settings)
+            );
 
             apiTokenRepository.subscribeOnChange(() -> {
                 SecurityDynamicConfiguration<ActionGroupsV7> actionGroupsConfiguration = configurationRepository.getConfiguration(
                     CType.ACTIONGROUPS
                 );
-                FlattenedActionGroups flattenedActionGroups = new FlattenedActionGroups(actionGroupsConfiguration.withStaticConfig());
-                Map<String, ActionPrivileges> newTokenPrivileges = new java.util.HashMap<>();
-                apiTokenRepository.forEachToken(
-                    (tokenId, role) -> newTokenPrivileges.put(
-                        tokenId,
-                        new SubjectBasedActionPrivileges(role, flattenedActionGroups, tokenIndexProtection, false)
-                    )
-                );
-                // Atomic swap: add/update new entries, then remove stale ones
-                tokenIdToActionPrivileges.putAll(newTokenPrivileges);
-                tokenIdToActionPrivileges.keySet().retainAll(newTokenPrivileges.keySet());
+                rebuildTokenPrivileges(new FlattenedActionGroups(actionGroupsConfiguration.withStaticConfig()));
             });
         }
 
@@ -220,6 +211,12 @@ public class PrivilegesConfiguration {
                     } catch (Exception e) {
                         log.error("Error while updating TenantPrivileges", e);
                     }
+
+                    try {
+                        rebuildTokenPrivileges(flattenedActionGroups);
+                    } catch (Exception e) {
+                        log.error("Error while updating API token privileges", e);
+                    }
                 } else {
                     log.debug("Privileges for PrivilegesEvaluator and DLS/FLS did not change.");
                 }
@@ -239,6 +236,30 @@ public class PrivilegesConfiguration {
                 this.privilegesEvaluator.get().updateClusterStateMetadata(coreDependencies.clusterStateSupplier());
             });
         }
+    }
+
+    /** Synchronized so that a slower, older computation cannot overwrite a newer one. */
+    private synchronized void rebuildTokenPrivileges(FlattenedActionGroups flattenedActionGroups) {
+        if (apiTokenRepository == null) {
+            return;
+        }
+        Map<String, ActionPrivileges> newTokenPrivileges = new HashMap<>();
+        apiTokenRepository.forEachToken(
+            (tokenId, role) -> newTokenPrivileges.put(
+                tokenId,
+                new SubjectBasedActionPrivileges(role, flattenedActionGroups, tokenIndexProtection, false)
+            )
+        );
+        // Atomic swap: add/update new entries, then remove stale ones
+        tokenIdToActionPrivileges.putAll(newTokenPrivileges);
+        tokenIdToActionPrivileges.keySet().retainAll(newTokenPrivileges.keySet());
+    }
+
+    /**
+     * For testing only: The privileges of the API tokens, by the name of the token user.
+     */
+    Map<String, ActionPrivileges> tokenPrivileges() {
+        return Collections.unmodifiableMap(tokenIdToActionPrivileges);
     }
 
     /**

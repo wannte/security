@@ -104,10 +104,7 @@ public class FlushCacheApiAction extends AbstractApiAction {
                     } else {
                         if (apiTokenRepository != null) {
                             apiTokenRepository.reloadApiTokensFromIndex(
-                                ActionListener.wrap(
-                                    v -> { apiTokenRepository.notifyAboutChanges(); },
-                                    e -> LOGGER.error("Failed to reload API tokens after cache flush", e)
-                                )
+                                ActionListener.wrap(v -> {}, e -> LOGGER.error("Failed to reload API tokens after cache flush", e))
                             );
                         }
                         LOGGER.debug("cache flushed successfully");

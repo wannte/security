@@ -93,7 +93,7 @@ public class ApiTokenRepository {
                         );
                     }
                 });
-                tokenCache = newCache;
+                replaceTokenCache(newCache);
                 listener.onResponse(null);
             }
 
@@ -147,14 +147,18 @@ public class ApiTokenRepository {
         tokenListener.add(listener);
     }
 
-    public synchronized void notifyAboutChanges() {
+    private void replaceTokenCache(Map<String, TokenEntry> newCache) {
+        tokenCache = newCache;
+        notifyAboutChanges();
+    }
+
+    private synchronized void notifyAboutChanges() {
         for (TokenListener listener : tokenListener) {
             try {
                 log.debug("Notify {} listener about change", listener);
                 listener.onChange();
             } catch (Exception e) {
                 log.error("{} listener errored: {}", listener, e.toString(), e);
-                throw ExceptionsHelper.convertToOpenSearchException(e);
             }
         }
     }

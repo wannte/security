@@ -132,10 +132,9 @@ public class ApiTokenUpdateAction extends ActionType<ApiTokenUpdateAction.Respon
 
         @Override
         protected void nodeOperation(final NodeRequest request, ActionListener<NodeResponse> listener) {
-            apiTokenRepository.reloadApiTokensFromIndex(ActionListener.wrap(unused -> {
-                apiTokenRepository.notifyAboutChanges();
-                listener.onResponse(new NodeResponse(clusterService.localNode()));
-            }, listener::onFailure));
+            apiTokenRepository.reloadApiTokensFromIndex(
+                ActionListener.wrap(unused -> listener.onResponse(new NodeResponse(clusterService.localNode())), listener::onFailure)
+            );
         }
     }
 

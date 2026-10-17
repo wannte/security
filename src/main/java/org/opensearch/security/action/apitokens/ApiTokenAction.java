@@ -257,7 +257,6 @@ public class ApiTokenAction extends BaseRestHandler {
                         absoluteExpiration,
                         createdBy,
                         wrapWithCacheRefresh(ActionListener.wrap(created -> {
-                            apiTokenRepository.notifyAboutChanges();
                             auditLog.logApiTokenCreated(createRequest.getName(), createdBy);
                             XContentBuilder builder = channel.newBuilder();
                             builder.startObject().field(ApiToken.ID_FIELD, created.id()).field("token", created.token()).endObject();
@@ -292,7 +291,6 @@ public class ApiTokenAction extends BaseRestHandler {
                     .getThreadContext()
                     .getTransient(ConfigConstants.OPENDISTRO_SECURITY_USER);
                 apiTokenRepository.revokeApiToken(id, wrapWithCacheRefresh(ActionListener.wrap(ignored -> {
-                    apiTokenRepository.notifyAboutChanges();
                     auditLog.logApiTokenRevoked(id, revokeUser != null ? revokeUser.getName() : null);
                     XContentBuilder builder = channel.newBuilder();
                     builder.startObject().field("message", "Token " + id + " revoked successfully.").endObject();

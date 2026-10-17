@@ -13,6 +13,7 @@ package org.opensearch.security.action.apitokens;
 
 import java.io.IOException;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
@@ -31,6 +32,7 @@ import org.opensearch.core.action.ActionListener;
 import org.opensearch.discovery.ClusterManagerNotDiscoveredException;
 import org.opensearch.gateway.GatewayService;
 import org.opensearch.index.IndexNotFoundException;
+import org.opensearch.security.configuration.TokenListener;
 import org.opensearch.security.securityconf.impl.v7.RoleV7;
 import org.opensearch.security.user.User;
 import org.opensearch.security.util.ActionListenerUtils.TestActionListener;
@@ -54,6 +56,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 @SuppressWarnings("unchecked")
+@LuceneTestCase.SuppressSysoutChecks(bugUrl = "Tests intentionally exercise failing listeners, which log their stack traces")
 public class ApiTokenRepositoryTests extends LuceneTestCase {
     private static final String TOKEN_ALPHA = "os_alpha";
     private static final String TOKEN_BETA = "os_beta";
@@ -282,6 +285,74 @@ public class ApiTokenRepositoryTests extends LuceneTestCase {
         assertEquals(List.of("cluster:monitor"), repository.getTokenCache().get(HASH_ALPHA).role().getCluster_permissions());
         assertEquals(List.of("cluster:admin"), repository.getTokenCache().get(HASH_BETA).role().getCluster_permissions());
         assertEquals(1, repository.getTokenCache().get(HASH_BETA).role().getIndex_permissions().size());
+    }
+
+    @Test
+    public void testReloadApiTokensFromIndexNotifiesListenersAfterCacheIsReplaced() {
+        Map<String, ApiToken> tokens = Map.of(
+            HASH_ALPHA,
+            new ApiToken("alpha", HASH_ALPHA, List.of("cluster:monitor"), List.of(), Instant.now(), Long.MAX_VALUE)
+        );
+        doAnswer(invocation -> {
+            ActionListener<Map<String, ApiToken>> listener = invocation.getArgument(0);
+            listener.onResponse(tokens);
+            return null;
+        }).when(apiTokenIndexHandler).getTokenMetadatas(any(ActionListener.class));
+
+        List<Boolean> cacheContainedTokenOnNotify = new ArrayList<>();
+        repository.subscribeOnChange(() -> cacheContainedTokenOnNotify.add(repository.isValidToken(HASH_ALPHA)));
+
+        TestActionListener<Void> listener = new TestActionListener<>();
+        repository.reloadApiTokensFromIndex(listener);
+
+        listener.assertSuccess();
+        assertEquals("Listeners must be notified exactly once per reload", List.of(true), cacheContainedTokenOnNotify);
+    }
+
+    @Test
+    public void testReloadApiTokensOnNodeStartNotifiesListeners() {
+        Map<String, ApiToken> tokens = Map.of(
+            HASH_ALPHA,
+            new ApiToken("alpha", HASH_ALPHA, List.of("cluster:monitor"), List.of(), Instant.now(), Long.MAX_VALUE)
+        );
+        doAnswer(invocation -> {
+            ActionListener<Map<String, ApiToken>> listener = invocation.getArgument(0);
+            listener.onResponse(tokens);
+            return null;
+        }).when(apiTokenIndexHandler).getTokenMetadatas(any(ActionListener.class));
+
+        TokenListener tokenListener = mock(TokenListener.class);
+        repository.subscribeOnChange(tokenListener);
+
+        TestActionListener<Void> listener = new TestActionListener<>();
+        repository.reloadApiTokensOnNodeStart(listener);
+
+        listener.assertSuccess();
+        verify(tokenListener, times(1)).onChange();
+    }
+
+    @Test
+    public void testReloadApiTokensFromIndexSucceedsDespiteFailingListener() {
+        Map<String, ApiToken> tokens = Map.of(
+            HASH_ALPHA,
+            new ApiToken("alpha", HASH_ALPHA, List.of("cluster:monitor"), List.of(), Instant.now(), Long.MAX_VALUE)
+        );
+        doAnswer(invocation -> {
+            ActionListener<Map<String, ApiToken>> listener = invocation.getArgument(0);
+            listener.onResponse(tokens);
+            return null;
+        }).when(apiTokenIndexHandler).getTokenMetadatas(any(ActionListener.class));
+
+        repository.subscribeOnChange(() -> { throw new IllegalStateException("boom"); });
+        TokenListener laterListener = mock(TokenListener.class);
+        repository.subscribeOnChange(laterListener);
+
+        TestActionListener<Void> listener = new TestActionListener<>();
+        repository.reloadApiTokensFromIndex(listener);
+
+        listener.assertSuccess();
+        assertTrue(repository.isValidToken(HASH_ALPHA));
+        verify(laterListener, times(1)).onChange();
     }
 
     @Test
